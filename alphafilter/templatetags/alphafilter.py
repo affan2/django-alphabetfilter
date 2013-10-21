@@ -96,10 +96,11 @@ class AlphabetFilterNode(Node):
 
     {% qs_alphabet_filter objects "lastname" "myapp/template.html" %}
     """
-    def __init__(self, qset, field_name, filtered=None,
+    def __init__(self, qset, field_name, page_url, filtered=None,
         template_name="alphafilter/alphabet.html", strip_params=None):
         self.qset = Variable(qset)
         self.field_name = Variable(field_name)
+        self.page_url = Variable(page_url)
         self.template_name = Variable(template_name)
         self.filtered = filtered
         if strip_params is None:
@@ -116,27 +117,33 @@ class AlphabetFilterNode(Node):
             field_name = self.field_name.resolve(context)
         except VariableDoesNotExist:
             field_name = self.field_name.var
+        try:
+            page_url = self.page_url.resolve(context)
+            path_items = page_url.strip('/').split('/')
+            page_url = path_items[0]
+            alpha_lookup = ''
+            if len(path_items) > 1:
+                alpha_lookup = path_items[1]
+        except VariableDoesNotExist:
+            raise TemplateSyntaxError("Can't resolve the page_url passed")
 
         if not field_name:
             return ''
 
-        alpha_field = '%s__istartswith' % field_name
         request = context.get('request', None)
 
         if request is not None:
-            alpha_lookup = request.GET.get(alpha_field, '')
             qstring_items = request.GET.copy()
-            self.strip_params.append(alpha_field)
-            self.strip_params.append('page')
             for param in self.strip_params:
                 if param in qstring_items:
                     qstring_items.pop(param)
             qstring = "&".join(["%s=%s" % (k, v) for k, v in qstring_items.iteritems()])
         else:
-            alpha_lookup = ''
             qstring = ''
 
-        link = lambda d: "?%s&%s" % (qstring, "%s=%s" % d.items()[0])
+        link = lambda d: "/%s/%s%s" % (page_url,
+                                       '%s/' % d.items()[0][1] if d.items()[0][1] != '' else '',
+                                       '?%s' % qstring if qstring else '')
         if self.filtered == None:
             letters_used = _get_available_letters(field_name, qset)
         else:
@@ -149,17 +156,29 @@ class AlphabetFilterNode(Node):
         all_letters.sort()
 
         choices = [{
-            'link': link({alpha_field: letter}),
+            'link': link({'alphabet': letter.lower()}),
             'title': letter,
-            'active': letter == alpha_lookup,
-            'has_entries': letter in letters_used, } for letter in all_letters]
+            'active': letter.lower() == alpha_lookup,
+            'has_entries': letter in letters_used, } for letter in all_letters if not letter.isnumeric()]
+
+        has_digits = False
+        for letter in all_letters:
+            if letter.isnumeric():
+                has_digits = True
+                break
+        digits = [{
+            'link': link({'alphabet': '0-9'}),
+            'title': _('0-9'),
+            'active': '0-9' == alpha_lookup,
+            'has_entries': has_digits
+        }, ]
         all_letters = [{
-            'link': link({alpha_field: ''}),
+            'link': link({'alphabet': ''}),
             'title': _('All'),
             'active': '' == alpha_lookup,
             'has_entries': True
         }, ]
-        ctxt = {'choices': all_letters + choices}
+        ctxt = {'choices': all_letters + digits + choices, 'page_url': page_url}
 
         tmpl = get_template(self.template_name)
 
@@ -182,17 +201,17 @@ def qs_alphabet_filter(parser, token):
     specified
     """
     bits = token.split_contents()
-    if len(bits) == 3:
-        return AlphabetFilterNode(bits[1], bits[2])
-    elif len(bits) == 4:
-        if "=" in bits[3]:
-            key, val = bits[3].split('=')
-            return AlphabetFilterNode(bits[1], bits[2], strip_params=val)
-        else:
-            return AlphabetFilterNode(bits[1], bits[2], template_name=bits[3])
+    if len(bits) == 4:
+        return AlphabetFilterNode(bits[1], bits[2], bits[3])
     elif len(bits) == 5:
-        key, val = bits[4].split('=')
-        return AlphabetFilterNode(bits[1], bits[2], bits[3], bits[4])
+        if "=" in bits[4]:
+            key, val = bits[4].split('=')
+            return AlphabetFilterNode(bits[1], bits[2], bits[3], strip_params=val)
+        else:
+            return AlphabetFilterNode(bits[1], bits[2], bits[3], template_name=bits[4])
+    elif len(bits) == 6:
+        key, val = bits[5].split('=')
+        return AlphabetFilterNode(bits[1], bits[2], bits[3], bits[4], bits[5])
     else:
-        raise TemplateSyntaxError("%s is called with a queryset and field "
-            "name, and optionally a template." % bits[0])
+        raise TemplateSyntaxError("%s is called with a queryset, field "
+            "name and base page url, and optionally a template." % bits[0])
