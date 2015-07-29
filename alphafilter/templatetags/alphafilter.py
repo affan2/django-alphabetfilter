@@ -42,11 +42,16 @@ def _get_available_letters(field_name, queryset):
 
     Returns a set that represents the letters that exist in the database.
     """
+    from django.conf import settings
+    import string
+    default_ltrs = string.digits + string.ascii_uppercase
+    default_letters = getattr(settings, 'DEFAULT_ALPHABET', default_ltrs)
+
     if django.VERSION[1] != 4:
         result = queryset.values(field_name).annotate(
             fl=FirstLetter(field_name)
             ).values('fl').distinct()
-        return set([res['fl'] for res in result if res['fl'] is not None])
+        return set([res['fl'] for res in result if res['fl'] is not None and res['fl'] in default_letters])
     else:
         from django.db import connection
         qn = connection.ops.quote_name
@@ -56,7 +61,7 @@ def _get_available_letters(field_name, queryset):
         cursor = connection.cursor()
         cursor.execute(sql)
         rows = cursor.fetchall() or ()
-        return set([row[0] for row in rows if row[0] is not None])
+        return set([row[0] for row in rows if row[0] is not None and row[0] in default_letters])
 
 
 def alphabet(cl):
